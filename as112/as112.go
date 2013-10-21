@@ -11,12 +11,33 @@ import (
 	"flag"
 	"github.com/miekg/dns"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/pprof"
 	"syscall"
 )
+
+type handler struct { soa *dns.SOA }
+
+func (h *handler) ServeDNS(w *Res, r *dns.Msg) {
+	m := new(dns.Msg)
+	m.SetReply(r)
+	m.Authoritative = true
+	m.Ns = []dns.RR{h.soa}
+	w.WriteMsg(m)
+}
+
+type Res int
+
+func (m *Res) RemoteAddr() net.Addr        { return nil }
+func (m *Res) WriteMsg(m1 *dns.Msg) error  { return nil }
+func (m *Res) Write(b []byte) (int, error) { return 0, nil }
+func (m *Res) Close() error                { return nil }
+func (m *Res) TsigStatus() error           { return nil }
+func (m *Res) TsigTimersOnly(b bool)       {}
+func (m *Res) Hijack()                     {}
 
 const SOA string = "@ SOA prisoner.iana.org. hostmaster.root-servers.org. 2002040800 1800 900 0604800 604800"
 
@@ -56,14 +77,8 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 	for z, rr := range zones {
-		rrx := rr.(*dns.SOA) // Needed to create the actual RR, and not an reference.
-		dns.HandleFunc(z, func(w dns.ResponseWriter, r *dns.Msg) {
-			m := new(dns.Msg)
-			m.SetReply(r)
-			m.Authoritative = true
-			m.Ns = []dns.RR{rrx}
-			w.WriteMsg(m)
-		})
+		h := &handler{rr.(*dns.SOA)}
+		dns.Handle(z, h)
 	}
 	go func() {
 		err := dns.ListenAndServe(":8053", "tcp", nil)
